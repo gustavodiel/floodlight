@@ -46,6 +46,7 @@ import net.floodlightcontroller.routing.*;
 import net.floodlightcontroller.routing.web.RoutingWebRoutable;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.util.*;
+import tcc.diel.dropbox.DropboxAnalyzer;
 
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
@@ -101,6 +102,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
     private Map<OFPacketIn, Ethernet> l3cache;
     private DeviceListenerImpl deviceListener;
+    
+    private static DropboxAnalyzer dropbox = new DropboxAnalyzer();
 
     protected static class FlowSetIdRegistry {
         private volatile Map<NodePortTuple, Set<U64>> nptToFlowSetIds;
@@ -199,10 +202,15 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
     @Override
     public Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx) {
+
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 
         OFPort inPort = OFMessageUtils.getInPort(pi);
         NodePortTuple npt = new NodePortTuple(sw.getId(), inPort);
+        
+        if (dropbox.isEthernetPackageLANSync(eth)) {
+        	log.info("IT ISSSSSS");
+        }
 
         if (decision != null) {
             if (log.isTraceEnabled()) {
