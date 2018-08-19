@@ -209,7 +209,10 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
         NodePortTuple npt = new NodePortTuple(sw.getId(), inPort);
         
         if (dropbox.isEthernetPackageLANSync(eth)) {
-        	log.info("IT ISSSSSS");
+        	dropbox.processLANSyncPackage(eth, pi, sw, this.topologyService);
+            doFlood(sw, pi, decision, cntx);
+
+        	return Command.CONTINUE;
         }
 
         if (decision != null) {
@@ -714,7 +717,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
 
-        if (! path.getPath().isEmpty()) {
+        if (!path.getPath().isEmpty()) {
             if (log.isDebugEnabled()) {
                 log.debug("pushRoute inPort={} route={} " +
                                 "destination={}:{}",
