@@ -46,7 +46,6 @@ import net.floodlightcontroller.routing.*;
 import net.floodlightcontroller.routing.web.RoutingWebRoutable;
 import net.floodlightcontroller.topology.ITopologyService;
 import net.floodlightcontroller.util.*;
-import tcc.diel.dropbox.DropboxAnalyzer;
 
 import org.projectfloodlight.openflow.protocol.*;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
@@ -58,6 +57,9 @@ import org.python.google.common.collect.ImmutableList;
 import org.python.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+
+import tcc.diel.dropbox.DropboxAnalyzer;
+import tcc.diel.dropbox.DropboxResponses;
 
 import javax.annotation.Nonnull;
 
@@ -207,12 +209,16 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         OFPort inPort = OFMessageUtils.getInPort(pi);
         NodePortTuple npt = new NodePortTuple(sw.getId(), inPort);
-        
-        if (dropbox.isEthernetPackageLANSync(eth)) {
-        	dropbox.processLANSyncPackage(eth, pi, sw, this.topologyService);
+
+        DropboxResponses response = dropbox.isEthernetPackageLANSync(eth);
+        if (response == DropboxResponses.LANSYNC) {
+        	dropbox.shouldDropPackage(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
+
             doFlood(sw, pi, decision, cntx);
 
         	return Command.CONTINUE;
+        } else if (response == DropboxResponses.ARP) {
+            dropbox.processARPRequest(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
         }
 
         if (decision != null) {
