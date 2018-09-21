@@ -1,10 +1,8 @@
 package tcc.diel.dropbox;
 
 import net.floodlightcontroller.core.IFloodlightProviderService;
-import net.floodlightcontroller.core.IOFConnection;
 import net.floodlightcontroller.core.IOFSwitch;
 import net.floodlightcontroller.core.internal.IOFSwitchService;
-import net.floodlightcontroller.core.types.NodePortTuple;
 import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.devicemanager.SwitchPort;
@@ -14,18 +12,15 @@ import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.topology.ITopologyService;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
 import org.projectfloodlight.openflow.protocol.OFPacketOut;
-import org.projectfloodlight.openflow.protocol.OFPortDesc;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.types.*;
-import org.python.antlr.ast.Str;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Array;
+import javax.crypto.Mac;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
-import java.util.Set;
 
 /*
 Pls read:
@@ -44,7 +39,7 @@ public class DropboxAnalyzer {
 	protected static int NO_ONLINE_PORT_NUMBER = 12312;
 
 
-	static HashMap<IPv4Address, MacAddress> arpTable = new HashMap<>();
+	private static HashMap<IPv4Address, MacAddress> arpTable = new HashMap<>();
 	
 	public DropboxAnalyzer() {
 		// TODO Auto-generated constructor stub
@@ -105,31 +100,39 @@ public class DropboxAnalyzer {
         ARP arp = (ARP) eth.getPayload();
 
         IPv4Address target = arp.getTargetProtocolAddress();
+        IPv4Address sender = arp.getSenderProtocolAddress();
 
         log.info(target.toString());
+        log.info(iofSwitch.toString());
 
         if (arpTable.containsKey(target)) {
             MacAddress macTarget = arpTable.get(target);
             if (macTarget == null) {
-                arpTable.put(target, generateMacAddresForFakeIp(target));
+                arpTable.put(target, generateMacAddressForFakeIp(target));
             }
             macTarget = arpTable.get(target);
 
-            ArpRequestInfo info = new ArpRequestInfo( eth.getSourceMACAddress(), eth.getDestinationMACAddress(), macTarget, IPv4Address.of("255.255.255.255"), target);
+            // macSender    macTarget   macDest ipSender    ipTarget
+                ArpRequestInfo info = new ArpRequestInfo( macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
 
-            sendARPPacket(iofSwitch, info);
+            log.info(eth.getSourceMACAddress().toString());
+
+            info.sendARPPacket(iofSwitch);
 
         }
-
     }
 
-    private MacAddress generateMacAddresForFakeIp(IPv4Address iPv4Address) {
+    private MacAddress generateMacAddressForFakeIp(IPv4Address iPv4Address) {
 	    String strMac = "Ba:ba:ca:";
 	    String last = String.format("%06d", arpTable.size());
 
         last = last.substring(0, 2) + ":" + last.substring(2, 4) + ":" + last.substring(4, 6);
 
-        return MacAddress.of(strMac + last);
+        String finalMac = strMac + last;
+
+        log.info(finalMac);
+
+        return MacAddress.of(finalMac);
     }
 
 	public boolean shouldDropPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService, IDeviceService deviceManagerService) {
@@ -170,17 +173,21 @@ public class DropboxAnalyzer {
             if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
 
                 PacketTopologyInfo info = new PacketTopologyInfo(
-                        MacAddress.FULL_MASK, eth.getDestinationMACAddress(),
-                        createFakeIp(ipv4.getSourceAddress()), IPv4Address.of("255.255.255.255"),
-                        6695, 12312);
+                        MacAddress.FULL_MASK,
+                        eth.getDestinationMACAddress(),
+                        createFakeIpForSwitch(ipv4.getSourceAddress(), toSendSwitch),
+                        IPv4Address.of("255.255.255.255"),
+                        6695,
+                        12312);
 
-                sendUDPPacket(toSendSwitch, info, packageData);
+                info.sendUDPPacket(toSendSwitch, packageData);
             }
 
         }
     }
 
-    private IPv4Address createFakeIp(IPv4Address iPv4Address) {
+    private IPv4Address createFakeIpForSwitch(IPv4Address iPv4Address, IOFSwitch iofSwitch) {
+
         arpTable.put(iPv4Address, null);
 
 	    return iPv4Address;
@@ -238,166 +245,10 @@ public class DropboxAnalyzer {
         return false;
     }
 
-    private void sendARPPacket(IOFSwitch iofSwitch, ArpRequestInfo arpInfo) {
-        // First, we create a Eth header
-        Ethernet l2 = new Ethernet();
-        l2.setSourceMACAddress(arpInfo.senderMac);
-        l2.setDestinationMACAddress(arpInfo.destinationMac);
-        l2.setEtherType(EthType.ARP);
-
-
-        // Set as ARP
-        ARP arp = new ARP()
-                .setHardwareType(ARP.HW_TYPE_ETHERNET)
-                .setProtocolType(ARP.PROTO_TYPE_IP)
-                .setHardwareAddressLength((byte) 6)
-                .setProtocolAddressLength((byte) 4)
-                .setSenderHardwareAddress(arpInfo.senderMac)
-                .setSenderProtocolAddress(arpInfo.senderIp)
-                .setOpCode(ARP.OP_REPLY)
-                .setTargetHardwareAddress(arpInfo.targetMac)
-                .setTargetProtocolAddress(arpInfo.targetIp);
-
-
-        // Set the payloads
-        l2.setPayload(arp);
-
-        // Serialize
-        byte[] serializedData = l2.serialize();
-
-        OFPacketOut po = iofSwitch.getOFFactory().buildPacketOut()
-                .setData(serializedData)
-                .setActions(Collections.singletonList((OFAction) iofSwitch.getOFFactory().actions().output(OFPort.NORMAL, 0xffFFffFF)))
-                .setInPort(OFPort.CONTROLLER)
-                .build();
-
-        log.info("Sent ARP");
-
-        iofSwitch.write(po);
-    }
-
-	private void sendUDPPacket(IOFSwitch iofSwitch, PacketTopologyInfo packetTopologyInfo, Data data) {
-        // First, we create a Eth header
-        Ethernet l2 = new Ethernet();
-        l2.setSourceMACAddress(packetTopologyInfo.getMacSource());
-        l2.setDestinationMACAddress(packetTopologyInfo.getMacDest());
-        l2.setEtherType(EthType.IPv4);
-
-        // Then, the Payload
-        IPv4 l3 = new IPv4();
-        l3.setSourceAddress(packetTopologyInfo.getIpSource());
-        l3.setDestinationAddress(packetTopologyInfo.getIpDest());
-        l3.setTtl((byte) 64);
-        l3.setProtocol(IpProtocol.UDP);
-
-
-        // Set as UDP
-        UDP l4 = new UDP();
-        l4.setSourcePort(TransportPort.of(packetTopologyInfo.getPortSource()));
-        l4.setDestinationPort(TransportPort.of(packetTopologyInfo.getPortDest()));
-
-
-        // Set the payloads
-        l2.setPayload(l3);
-        l3.setPayload(l4);
-        l4.setPayload(data);
-
-        // Serialize
-        byte[] serializedData = l2.serialize();
-
-        OFPacketOut po = iofSwitch.getOFFactory().buildPacketOut()
-                .setData(serializedData)
-                .setActions(Collections.singletonList((OFAction) iofSwitch.getOFFactory().actions().output(OFPort.NORMAL, 0xffFFffFF)))
-                .setInPort(OFPort.CONTROLLER)
-                .build();
-
-        iofSwitch.write(po);
-    }
-
 	private boolean isPortLANSync(int dstPort, int srcPort) {
 	    if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
 	        return true;
 
 	    return (dstPort > 17500 && dstPort < 17600 && srcPort > 17500 && srcPort < 17600);
     }
-
-    private class ArpRequestInfo {
-	    public MacAddress senderMac, targetMac, destinationMac;
-	    public IPv4Address senderIp, targetIp;
-
-        public ArpRequestInfo(MacAddress destinationMac, MacAddress senderMac, MacAddress targetMac, IPv4Address senderIp, IPv4Address targetIp) {
-            this.senderMac = senderMac;
-            this.targetMac = targetMac;
-            this.senderIp = senderIp;
-            this.targetIp = targetIp;
-            this.destinationMac = destinationMac;
-        }
-    }
-
-    private class PacketTopologyInfo {
-	    private MacAddress macSource;
-        private MacAddress macDest;
-	    private IPv4Address ipSource;
-        private IPv4Address ipDest;
-	    private int portSource;
-        private int portDest;
-
-        public PacketTopologyInfo(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, int portSource, int portDest) {
-            this.setMacSource(macSource);
-            this.setMacDest(macDest);
-            this.setIpSource(ipSource);
-            this.setIpDest(ipDest);
-            this.setPortSource(portSource);
-            this.setPortDest(portDest);
-        }
-
-        public MacAddress getMacSource() {
-            return macSource;
-        }
-
-        public void setMacSource(MacAddress macSource) {
-            this.macSource = macSource;
-        }
-
-        public MacAddress getMacDest() {
-            return macDest;
-        }
-
-        public void setMacDest(MacAddress macDest) {
-            this.macDest = macDest;
-        }
-
-        public IPv4Address getIpSource() {
-            return ipSource;
-        }
-
-        public void setIpSource(IPv4Address ipSource) {
-            this.ipSource = ipSource;
-        }
-
-        public IPv4Address getIpDest() {
-            return ipDest;
-        }
-
-        public void setIpDest(IPv4Address ipDest) {
-            this.ipDest = ipDest;
-        }
-
-        public int getPortSource() {
-            return portSource;
-        }
-
-        public void setPortSource(int portSource) {
-            this.portSource = portSource;
-        }
-
-        public int getPortDest() {
-            return portDest;
-        }
-
-        public void setPortDest(int portDest) {
-            this.portDest = portDest;
-        }
-    }
-
 }
