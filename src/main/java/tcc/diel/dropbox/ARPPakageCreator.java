@@ -12,14 +12,14 @@ import org.projectfloodlight.openflow.types.OFPort;
 
 import java.util.Collections;
 
-class ArpRequestInfo {
+class ARPPakageCreator {
     private MacAddress senderMac;
     private MacAddress targetMac;
     private MacAddress destinationMac;
     private IPv4Address senderIp;
     private IPv4Address targetIp;
 
-    ArpRequestInfo(MacAddress senderMac, MacAddress targetMac, MacAddress destinationMac, IPv4Address senderIp, IPv4Address targetIp) {
+    ARPPakageCreator(MacAddress senderMac, MacAddress targetMac, MacAddress destinationMac, IPv4Address senderIp, IPv4Address targetIp) {
         this.senderMac = senderMac;
         this.targetMac = targetMac;
         this.destinationMac = destinationMac;

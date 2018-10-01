@@ -11,15 +11,12 @@ import net.floodlightcontroller.packet.*;
 import net.floodlightcontroller.routing.IRoutingService;
 import net.floodlightcontroller.topology.ITopologyService;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
-import org.projectfloodlight.openflow.protocol.OFPacketOut;
-import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.types.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import javax.crypto.Mac;
 import java.util.Arrays;
-import java.util.Collections;
+import java.util.Collection;
 import java.util.HashMap;
 
 /*
@@ -113,7 +110,7 @@ public class DropboxAnalyzer {
             macTarget = arpTable.get(target);
 
             // macSender    macTarget   macDest ipSender    ipTarget
-                ArpRequestInfo info = new ArpRequestInfo( macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
+                ARPPakageCreator info = new ARPPakageCreator( macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
 
             log.info(eth.getSourceMACAddress().toString());
 
@@ -172,7 +169,7 @@ public class DropboxAnalyzer {
 
             if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
 
-                PacketTopologyInfo info = new PacketTopologyInfo(
+                UDPPackageCreator info = new UDPPackageCreator(
                         MacAddress.FULL_MASK,
                         eth.getDestinationMACAddress(),
                         createFakeIpForSwitch(ipv4.getSourceAddress(), toSendSwitch),
@@ -242,6 +239,19 @@ public class DropboxAnalyzer {
         log.info("Not Done!");
         TCP tcp = (TCP)ipv4.getPayload();
 
+        IDevice destinationHost = findDeviceFromIP(ipv4.getDestinationAddress(), deviceManagerService);
+
+        SwitchPort[] ports = destinationHost.getAttachmentPoints();
+
+        if (ports.length > 0) {
+            DatapathId switchId = ports[0].getNodeId();
+
+            IOFSwitch iofSwitch1 = switchService.getSwitch(switchId);
+
+            TCPPackageCreator tcpPackage = new TCPPackageCreator(eth.getSourceMACAddress(), destinationHost.getMACAddress(), createFakeIpForSwitch(ipv4.getSourceAddress(), iofSwitch1), ipv4.getDestinationAddress(), tcp);
+            tcpPackage.sendTCPPacket(iofSwitch1, (Data)tcp.getPayload());
+        }
+
         return false;
     }
 
@@ -250,5 +260,22 @@ public class DropboxAnalyzer {
 	        return true;
 
 	    return (dstPort > 17500 && dstPort < 17600 && srcPort > 17500 && srcPort < 17600);
+    }
+
+    private IDevice findDeviceFromIP(IPv4Address ip, IDeviceService deviceManagerService) {
+        // Fetch all known devices
+        Collection<? extends IDevice> allDevices = deviceManagerService.getAllDevices();
+
+        IDevice dstDevice = null;
+        for (IDevice device : allDevices) {
+            for (int i = 0; i < device.getIPv4Addresses().length; ++i) {
+                if (device.getIPv4Addresses()[i].equals(ip)) {
+                    dstDevice = device;
+                    break;
+                }
+            }
+        }
+
+        return dstDevice;
     }
 }

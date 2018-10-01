@@ -11,7 +11,7 @@ import org.projectfloodlight.openflow.types.*;
 
 import java.util.Collections;
 
-class PacketTopologyInfo {
+class UDPPackageCreator {
     private MacAddress macSource;
     private MacAddress macDest;
     private IPv4Address ipSource;
@@ -19,7 +19,7 @@ class PacketTopologyInfo {
     private int portSource;
     private int portDest;
 
-    PacketTopologyInfo(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, int portSource, int portDest) {
+    UDPPackageCreator(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, int portSource, int portDest) {
         this.setMacSource(macSource);
         this.setMacDest(macDest);
         this.setIpSource(ipSource);
