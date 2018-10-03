@@ -36,7 +36,7 @@ public class DropboxAnalyzer {
 	protected static int NO_ONLINE_PORT_NUMBER = 12312;
 
 
-	private static HashMap<IPv4Address, MacAddress> arpTable = new HashMap<>();
+	private static HashMap<String, FakeIPMatch> arpTable = new HashMap<>();
 	
 	public DropboxAnalyzer() {
 		// TODO Auto-generated constructor stub
@@ -61,20 +61,15 @@ public class DropboxAnalyzer {
 	                log.info("TCP SOURCE: {}:{}", ipv4.getSourceAddress(), srcPort);
 	                log.info("TCP DESTINATION: {}:{}", ipv4.getDestinationAddress(), dstPort);
 	                
-	                if (this.isPortLANSync(dstPort, srcPort)){
+	                if (this.isTCPLANSync(tcp, ipv4)){
 	                	return DropboxResponses.LANSYNC;
 	                }
 	                 
 	            } else if (ipv4.getProtocol() == IpProtocol.UDP) {
 	            	
 	                UDP udp = (UDP) ipv4.getPayload();
-	  
-	                int srcPort = udp.getSourcePort().getPort();
-	                int dstPort = udp.getDestinationPort().getPort();
-
-	                log.info("UDP: {} {}", srcPort, dstPort);
 	                
-	                if (this.isPortLANSync(dstPort, srcPort)) {
+	                if (this.isUDPLANSync(udp, ipv4)) {
 	                	return DropboxResponses.LANSYNC;
 	                }
 	            }
@@ -82,12 +77,8 @@ public class DropboxAnalyzer {
 	        } else if (eth.getEtherType() == EthType.ARP) {
 	        	
 	            ARP arp = (ARP) eth.getPayload();
-	            
-	            log.info("ARP: {}", arp.toString());
 
 	            return DropboxResponses.ARP;
-	        } else {
-	            log.info("Nao Sei: {}", eth.getEtherType());
 	        }
 		
 		return DropboxResponses.CONTINUE;
@@ -102,12 +93,16 @@ public class DropboxAnalyzer {
         log.info(target.toString());
         log.info(iofSwitch.toString());
 
-        if (arpTable.containsKey(target)) {
-            MacAddress macTarget = arpTable.get(target);
-            if (macTarget == null) {
-                arpTable.put(target, generateMacAddressForFakeIp(target));
+        if (arpTable.containsKey(target.toString())) {
+            FakeIPMatch fakeIPMatch = arpTable.get(target);
+            if (fakeIPMatch == null) {
+                return;
             }
-            macTarget = arpTable.get(target);
+            MacAddress macTarget = fakeIPMatch.macAddress;
+            if (macTarget == null) {
+                fakeIPMatch.macAddress = generateMacAddressForFakeIp(target);
+                macTarget = fakeIPMatch.macAddress;
+            }
 
             // macSender    macTarget   macDest ipSender    ipTarget
                 ARPPakageCreator info = new ARPPakageCreator( macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
@@ -138,10 +133,12 @@ public class DropboxAnalyzer {
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
         if (packageIsTCP(ipv4.getPayload())) {
+            log.info("*** It is TCP ***********************************************************");
             return processTCPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
         } else {
+            log.info("*** It is UDP");
             processUDPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
-            return false;
+            return true;
         }
 	}
 
@@ -163,31 +160,37 @@ public class DropboxAnalyzer {
             return;
         }
 
+        if (!ipv4.getDestinationAddress().toString().equals("255.255.255.255")) {
+            return;
+        }
+
 
         for (DatapathId switchId : switchService.getAllSwitchDpids()){
             IOFSwitch toSendSwitch = switchService.getSwitch(switchId);
-
-            if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
+            log.info("Sending to " + toSendSwitch.toString());
+            //if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
+                log.info("Not same cluster!!!");
 
                 UDPPackageCreator info = new UDPPackageCreator(
-                        MacAddress.FULL_MASK,
+                        eth.getSourceMACAddress(),
                         eth.getDestinationMACAddress(),
                         createFakeIpForSwitch(ipv4.getSourceAddress(), toSendSwitch),
                         IPv4Address.of("255.255.255.255"),
-                        6695,
-                        12312);
+                        udp.getSourcePort().getPort(),
+                        udp.getDestinationPort().getPort());
 
-                info.sendUDPPacket(toSendSwitch, packageData);
-            }
+                info.sendUDPPacket(toSendSwitch, eth);
+            //}
 
         }
     }
 
     private IPv4Address createFakeIpForSwitch(IPv4Address iPv4Address, IOFSwitch iofSwitch) {
+        FakeIPMatch fakeIPMatch = new FakeIPMatch(iPv4Address.toString(), iPv4Address.toString());
 
-        arpTable.put(iPv4Address, null);
+        arpTable.put(iPv4Address.toString(), fakeIPMatch);
 
-	    return iPv4Address;
+	    return IPv4Address.of(fakeIPMatch.FakeIP);
     }
 
     private boolean isHostsOnSameSwitch(IDevice host1, IDevice host2, IOFSwitchService switchService){
@@ -255,11 +258,31 @@ public class DropboxAnalyzer {
         return false;
     }
 
-	private boolean isPortLANSync(int dstPort, int srcPort) {
-	    if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
-	        return true;
+//     db-lsp || (db-lsp-disc && ip.dst == 255.255.255.255)
 
-	    return (dstPort > 17500 && dstPort < 17600 && srcPort > 17500 && srcPort < 17600);
+    private boolean isUDPLANSync(UDP udp, IPv4 ip) {
+        int srcPort = udp.getSourcePort().getPort();
+        int dstPort = udp.getDestinationPort().getPort();
+
+        log.info("UDP: {} {}", srcPort, dstPort);
+
+        if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
+            return true;
+
+        return ((dstPort >= 17500 && dstPort <= 17600) || (srcPort >= 17500 && srcPort <= 17600));
+    }
+
+
+    private boolean isTCPLANSync(TCP tcp, IPv4 ip) {
+        int srcPort = tcp.getSourcePort().getPort();
+        int dstPort = tcp.getDestinationPort().getPort();
+
+        log.info("TCP: {} {}", srcPort, dstPort);
+
+        if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
+            return true;
+
+        return ((dstPort >= 17500 && dstPort <= 17600) || (srcPort >= 17500 && srcPort <= 17600));
     }
 
     private IDevice findDeviceFromIP(IPv4Address ip, IDeviceService deviceManagerService) {

@@ -28,34 +28,35 @@ class UDPPackageCreator {
         this.setPortDest(portDest);
     }
 
-    void sendUDPPacket(IOFSwitch iofSwitch,Data data) {
+    void sendUDPPacket(IOFSwitch iofSwitch, Ethernet ethernet) {
         // First, we create a Eth header
-        Ethernet l2 = new Ethernet();
-        l2.setSourceMACAddress(this.getMacSource());
-        l2.setDestinationMACAddress(this.getMacDest());
-        l2.setEtherType(EthType.IPv4);
-
-        // Then, the Payload
-        IPv4 l3 = new IPv4();
-        l3.setSourceAddress(this.getIpSource());
-        l3.setDestinationAddress(this.getIpDest());
-        l3.setTtl((byte) 64);
-        l3.setProtocol(IpProtocol.UDP);
-
-
-        // Set as UDP
-        UDP l4 = new UDP();
-        l4.setSourcePort(TransportPort.of(this.getPortSource()));
-        l4.setDestinationPort(TransportPort.of(this.getPortDest()));
-
-
-        // Set the payloads
-        l2.setPayload(l3);
-        l3.setPayload(l4);
-        l4.setPayload(data);
+//        Ethernet l2 = new Ethernet();
+//        l2.setSourceMACAddress(this.getMacSource());
+//        l2.setDestinationMACAddress(this.getMacDest());
+//        l2.setEtherType(EthType.IPv4);
+//
+//        // Then, the Payload
+//        IPv4 l3 = new IPv4();
+//        l3.setSourceAddress(this.getIpSource());
+//        l3.setDestinationAddress(this.getIpDest());
+//        l3.setTtl((byte) 64);
+//        l3.setProtocol(IpProtocol.UDP);
+//        l3.setFlags(IPv4.IPV4_FLAGS_DONTFRAG);
+//
+//
+//        // Set as UDP
+//        UDP l4 = new UDP();
+//        l4.setSourcePort(TransportPort.of(this.getPortSource()));
+//        l4.setDestinationPort(TransportPort.of(this.getPortDest()));
+//
+//
+//        // Set the payloads
+//        l2.setPayload(l3);
+//        l3.setPayload(l4);
+//        l4.setPayload(data);
 
         // Serialize
-        byte[] serializedData = l2.serialize();
+        byte[] serializedData = ethernet.serialize();
 
         OFPacketOut po = iofSwitch.getOFFactory().buildPacketOut()
                 .setData(serializedData)

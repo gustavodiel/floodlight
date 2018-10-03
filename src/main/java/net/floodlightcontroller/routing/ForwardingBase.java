@@ -132,7 +132,6 @@ public abstract class ForwardingBase implements IOFMessageListener {
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-        log.info("oieeee");
         switch (msg.getType()) {
         case PACKET_IN:
             IRoutingDecision decision = null;
