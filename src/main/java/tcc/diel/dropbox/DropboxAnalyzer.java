@@ -36,6 +36,7 @@ public class DropboxAnalyzer {
 	protected static int NO_ONLINE_PORT_NUMBER = 12312;
 
 
+	//                     Fake IP  Match
 	private static HashMap<String, FakeIPMatch> arpTable = new HashMap<>();
 
 	private static boolean first = true;
@@ -84,26 +85,24 @@ public class DropboxAnalyzer {
         IPv4Address target = arp.getTargetProtocolAddress();
         IPv4Address sender = arp.getSenderProtocolAddress();
 
-        log.info(target.toString());
-        log.info(iofSwitch.toString());
+        log.info("ARP request for {} to {}", target.toString(), sender.toString());
 
-        if (arpTable.containsKey(target.toString())) {
-            FakeIPMatch fakeIPMatch = arpTable.get(target.toString());
-            if (fakeIPMatch == null) {
-                return;
-            }
-            MacAddress macTarget = fakeIPMatch.macAddress;
+        FakeIPMatch match = getMatchForFakeIp(target);
+
+        if (match != null) {
+            MacAddress macTarget = match.macAddress;
             if (macTarget == null) {
-                fakeIPMatch.macAddress = generateMacAddressForFakeIp(target);
-                macTarget = fakeIPMatch.macAddress;
+                macTarget = match.macAddress = generateMacAddressForFakeIp(target);
             }
 
             // macSender    macTarget   macDest ipSender    ipTarget
-                ARPPakageCreator info = new ARPPakageCreator( macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
+            ARPPakageCreator info = new ARPPakageCreator(macTarget, eth.getSourceMACAddress(), eth.getSourceMACAddress(), target, sender);
 
             log.info(eth.getSourceMACAddress().toString());
 
             info.sendARPPacket(iofSwitch);
+
+            log.info("SEND ARP!!!!");
 
         }
     }
@@ -147,16 +146,14 @@ public class DropboxAnalyzer {
 
 	    Data packageData = (Data) udp.getPayload();
 
-//        if (!ipv4.getDestinationAddress().toString().equals("255.255.255.255")) {
-//            return;
-//        }
+        if (!ipv4.getDestinationAddress().toString().equals("255.255.255.255")) {
+            return;
+        }
 
 
         for (DatapathId switchId : switchService.getAllSwitchDpids()){
             IOFSwitch toSendSwitch = switchService.getSwitch(switchId);
-            log.info("Sending to " + toSendSwitch.toString());
             if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
-                log.info("Not same cluster!!!");
 
                 UDPPackageCreator info = new UDPPackageCreator(
                         eth.getSourceMACAddress(),
@@ -166,14 +163,37 @@ public class DropboxAnalyzer {
                         udp.getSourcePort().getPort(),
                         udp.getDestinationPort().getPort());
 
-                info.sendUDPPacket(toSendSwitch, eth);
+                info.sendUDPPacket(toSendSwitch, eth, packageData);
             }
         }
     }
 
     private IPv4Address createFakeIpForSwitch(IPv4Address iPv4Address, IOFSwitch iofSwitch) {
+        if (first) {
+            first = false;
+
+            FakeIPMatch aliceMatch = new FakeIPMatch("10.0.1.4", "10.0.2.2");
+            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:01");
+
+            FakeIPMatch bobMatch = new FakeIPMatch("10.0.1.5", "10.0.2.3");
+            bobMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:03");
+
+            FakeIPMatch dielMatch = new FakeIPMatch("10.0.2.4", "10.0.1.2");
+            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:02");
+
+            arpTable.put("10.0.1.4", aliceMatch);
+            arpTable.put("10.0.1.5", bobMatch);
+
+            arpTable.put("10.0.2.4", dielMatch);
+            log.info("Rules added for Diel and Alice!");
+        }
+
 	    if (arpTable.containsKey(iPv4Address.toString())) {
-	        return IPv4Address.of(arpTable.get(iPv4Address.toString()).FakeIP);
+	        FakeIPMatch match = arpTable.get(iPv4Address.toString());
+
+	        return IPv4Address.of(match.FakeIP);
+        } else {
+	        log.error("NOP! {}", iPv4Address.toString());
         }
         FakeIPMatch fakeIPMatch = new FakeIPMatch(iPv4Address.toString(), iPv4Address.toString());
 
@@ -246,27 +266,27 @@ public class DropboxAnalyzer {
         return true;
     }
 
-//     db-lsp || (db-lsp-disc && ip.dst == 255.255.255.255)
+
+    private FakeIPMatch getMatchForFakeIp(IPv4Address iPv4Address) {
+	    if (arpTable.containsKey(iPv4Address.toString())) {
+	        return arpTable.get(iPv4Address.toString());
+        }
+        return null;
+    }
+
+    private FakeIPMatch getMatchForRealIp(IPv4Address iPv4Address) {
+        for (String fakeIp : arpTable.keySet()) {
+            FakeIPMatch match = arpTable.get(fakeIp);
+            if (iPv4Address.toString().equals(match.RealIP)) {
+                return match;
+            }
+        }
+        return null;
+    }
 
     private boolean isUDPLANSync(UDP udp, IPv4 ip) {
-	    if (first) {
-	        first = false;
-
-            FakeIPMatch aliceMatch = new FakeIPMatch("10.0.2.2", "10.0.2.2");
-            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:01");
-
-            FakeIPMatch dielMatch = new FakeIPMatch("10.0.1.2", "10.0.1.2");
-            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:02");
-
-            arpTable.put("10.0.2.2", aliceMatch);
-            arpTable.put("10.0.1.2", dielMatch);
-            log.info("Rules added for Diel and Alice!");
-        }
-
         int srcPort = udp.getSourcePort().getPort();
         int dstPort = udp.getDestinationPort().getPort();
-
-        log.info("UDP: {} {}", srcPort, dstPort);
 
         if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
             return true;
@@ -278,8 +298,6 @@ public class DropboxAnalyzer {
     private boolean isTCPLANSync(TCP tcp, IPv4 ip) {
         int srcPort = tcp.getSourcePort().getPort();
         int dstPort = tcp.getDestinationPort().getPort();
-
-        log.info("TCP: {} {}", srcPort, dstPort);
 
         if (NO_ONLINE_MODE && (srcPort == NO_ONLINE_PORT_NUMBER || dstPort == NO_ONLINE_PORT_NUMBER))
             return true;
