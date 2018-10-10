@@ -59,6 +59,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import tcc.diel.dropbox.DropboxAnalyzer;
+import tcc.diel.dropbox.DropboxHelper;
 import tcc.diel.dropbox.DropboxResponses;
 
 import javax.annotation.Nonnull;
@@ -204,15 +205,23 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
     @Override
     public Command processPacketInMessage(IOFSwitch sw, OFPacketIn pi, IRoutingDecision decision, FloodlightContext cntx) {
-
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
 
         OFPort inPort = OFMessageUtils.getInPort(pi);
         NodePortTuple npt = new NodePortTuple(sw.getId(), inPort);
 
+        if (DropboxHelper.shouldDropPackage(eth, sw)) {
+            doDropFlow(sw, pi, decision, cntx);
+            return Command.CONTINUE;
+        }
+
+
         DropboxResponses response = dropbox.isEthernetPackageLANSync(eth);
         if (response == DropboxResponses.LANSYNC) {
-        	dropbox.shouldDropPackage(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
+        	if (dropbox.shouldDropPackage(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService)) {
+                doDropFlow(sw, pi, decision, cntx);
+                return Command.CONTINUE;
+            }
 
             doFlood(sw, pi, decision, cntx);
 

@@ -61,7 +61,7 @@ class UDPPackageCreator {
         OFPacketOut po = iofSwitch.getOFFactory().buildPacketOut()
                 .setData(serializedData)
                 .setActions(Collections.singletonList((OFAction) iofSwitch.getOFFactory().actions().output(OFPort.NORMAL, 0xffFFffFF)))
-                .setInPort(OFPort.CONTROLLER)
+                .setInPort(OFPort.LOCAL)
                 .build();
 
         iofSwitch.write(po);

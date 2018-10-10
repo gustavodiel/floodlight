@@ -37,6 +37,8 @@ public class DropboxAnalyzer {
 
 
 	private static HashMap<String, FakeIPMatch> arpTable = new HashMap<>();
+
+	private static boolean first = true;
 	
 	public DropboxAnalyzer() {
 		// TODO Auto-generated constructor stub
@@ -54,13 +56,7 @@ public class DropboxAnalyzer {
 	            if (ipv4.getProtocol() == IpProtocol.TCP) {
 	            	
 	                TCP tcp = (TCP) ipv4.getPayload();
-	  
-	                int srcPort = tcp.getSourcePort().getPort();
-	                int dstPort = tcp.getDestinationPort().getPort();
 
-	                log.info("TCP SOURCE: {}:{}", ipv4.getSourceAddress(), srcPort);
-	                log.info("TCP DESTINATION: {}:{}", ipv4.getDestinationAddress(), dstPort);
-	                
 	                if (this.isTCPLANSync(tcp, ipv4)){
 	                	return DropboxResponses.LANSYNC;
 	                }
@@ -75,8 +71,6 @@ public class DropboxAnalyzer {
 	            }
 	            
 	        } else if (eth.getEtherType() == EthType.ARP) {
-	        	
-	            ARP arp = (ARP) eth.getPayload();
 
 	            return DropboxResponses.ARP;
 	        }
@@ -94,7 +88,7 @@ public class DropboxAnalyzer {
         log.info(iofSwitch.toString());
 
         if (arpTable.containsKey(target.toString())) {
-            FakeIPMatch fakeIPMatch = arpTable.get(target);
+            FakeIPMatch fakeIPMatch = arpTable.get(target.toString());
             if (fakeIPMatch == null) {
                 return;
             }
@@ -153,22 +147,15 @@ public class DropboxAnalyzer {
 
 	    Data packageData = (Data) udp.getPayload();
 
-        log.info(String.valueOf(udp.getSourcePort()));
-
-        if (udp.getSourcePort().getPort() == 6695) {
-            log.info("Our generated package! Staph");
-            return;
-        }
-
-        if (!ipv4.getDestinationAddress().toString().equals("255.255.255.255")) {
-            return;
-        }
+//        if (!ipv4.getDestinationAddress().toString().equals("255.255.255.255")) {
+//            return;
+//        }
 
 
         for (DatapathId switchId : switchService.getAllSwitchDpids()){
             IOFSwitch toSendSwitch = switchService.getSwitch(switchId);
             log.info("Sending to " + toSendSwitch.toString());
-            //if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
+            if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
                 log.info("Not same cluster!!!");
 
                 UDPPackageCreator info = new UDPPackageCreator(
@@ -180,12 +167,14 @@ public class DropboxAnalyzer {
                         udp.getDestinationPort().getPort());
 
                 info.sendUDPPacket(toSendSwitch, eth);
-            //}
-
+            }
         }
     }
 
     private IPv4Address createFakeIpForSwitch(IPv4Address iPv4Address, IOFSwitch iofSwitch) {
+	    if (arpTable.containsKey(iPv4Address.toString())) {
+	        return IPv4Address.of(arpTable.get(iPv4Address.toString()).FakeIP);
+        }
         FakeIPMatch fakeIPMatch = new FakeIPMatch(iPv4Address.toString(), iPv4Address.toString());
 
         arpTable.put(iPv4Address.toString(), fakeIPMatch);
@@ -215,18 +204,15 @@ public class DropboxAnalyzer {
     }
 
     private boolean processTCPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService, IDeviceService deviceManagerService) {
-        log.info("**********************************************************************");
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
         IDevice h1 = null;
         IDevice h2 = null;
 
-        log.info("[ DEVICES ] **********************************************************************");
         for (IDevice device : deviceManagerService.getAllDevices()) {
             log.info(device.toString());
             if (Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getDestinationAddress()) ||
                     Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getSourceAddress())) {
-                log.info(Arrays.toString(device.getIPv4Addresses()) + " contains either " + ipv4.getSourceAddress().toString() + " or " + ipv4.getDestinationAddress().toString());
                 if (h1 == null) {
                     h1 = device;
                 } else {
@@ -236,7 +222,8 @@ public class DropboxAnalyzer {
         }
 
         if (isHostsOnSameSwitch(h1, h2, switchService)) {
-            return true;
+            log.info("SAME SUBNETWORK!!!!");
+            return false;
         }
 
         log.info("Not Done!");
@@ -247,6 +234,7 @@ public class DropboxAnalyzer {
         SwitchPort[] ports = destinationHost.getAttachmentPoints();
 
         if (ports.length > 0) {
+            log.info("adsasdasdasaadasad");
             DatapathId switchId = ports[0].getNodeId();
 
             IOFSwitch iofSwitch1 = switchService.getSwitch(switchId);
@@ -255,12 +243,26 @@ public class DropboxAnalyzer {
             tcpPackage.sendTCPPacket(iofSwitch1, (Data)tcp.getPayload());
         }
 
-        return false;
+        return true;
     }
 
 //     db-lsp || (db-lsp-disc && ip.dst == 255.255.255.255)
 
     private boolean isUDPLANSync(UDP udp, IPv4 ip) {
+	    if (first) {
+	        first = false;
+
+            FakeIPMatch aliceMatch = new FakeIPMatch("10.0.2.2", "10.0.2.2");
+            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:01");
+
+            FakeIPMatch dielMatch = new FakeIPMatch("10.0.1.2", "10.0.1.2");
+            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:02");
+
+            arpTable.put("10.0.2.2", aliceMatch);
+            arpTable.put("10.0.1.2", dielMatch);
+            log.info("Rules added for Diel and Alice!");
+        }
+
         int srcPort = udp.getSourcePort().getPort();
         int dstPort = udp.getDestinationPort().getPort();
 
