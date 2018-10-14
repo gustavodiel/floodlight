@@ -4,13 +4,19 @@ import org.projectfloodlight.openflow.types.MacAddress;
 
 public class FakeIPMatch {
 
-    String FakeIP;
-    String RealIP;
+    String fakeIP;
+    String realIP;
 
-    MacAddress macAddress;
+    MacAddress fakeMacAddress;
+    MacAddress realMacAddress;
 
     public FakeIPMatch(String fakeIP, String realIP) {
-        FakeIP = fakeIP;
-        RealIP = realIP;
+        this.fakeIP = fakeIP;
+        this.realIP = realIP;
+    }
+
+    @Override
+    public String toString() {
+        return "Real IP: " + realIP + ", Fake IP: " + fakeIP + "  |  Real Mac: " + realMacAddress + ", Fake Mac: " + fakeMacAddress;
     }
 }

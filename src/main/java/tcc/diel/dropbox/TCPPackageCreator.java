@@ -18,15 +18,16 @@ class TCPPackageCreator {
     private IPv4Address ipDest;
     private TCP oldTCP;
 
-    TCPPackageCreator(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, TCP old) {
-        this.setMacSource(macSource);
-        this.setMacDest(macDest);
-        this.setIpSource(ipSource);
-        this.setIpDest(ipDest);
-        this.oldTCP = old;
+    public TCPPackageCreator(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, TCP oldTCP) {
+        this.macSource = macSource;
+        this.macDest = macDest;
+        this.ipSource = ipSource;
+        this.ipDest = ipDest;
+        this.oldTCP = oldTCP;
     }
 
-    void sendTCPPacket(IOFSwitch iofSwitch, Data data) {
+
+    void sendTCPPacket(IOFSwitch iofSwitch, IPv4 iPv4, Data data) {
         // First, we create a Eth header
         Ethernet l2 = new Ethernet();
         l2.setSourceMACAddress(this.getMacSource());
@@ -34,11 +35,17 @@ class TCPPackageCreator {
         l2.setEtherType(EthType.IPv4);
 
         // Then, the Payload
-        IPv4 l3 = new IPv4();
-        l3.setSourceAddress(this.getIpSource());
-        l3.setDestinationAddress(this.getIpDest());
-        l3.setTtl((byte) 64);
-        l3.setProtocol(IpProtocol.UDP);
+//        IPv4 l3 = new IPv4();
+//        l3.setSourceAddress(this.getIpSource());
+//        l3.setDestinationAddress(this.getIpDest());
+//        l3.setFlags(this.flags);
+//        l3.setTtl((byte) 64);
+//        l3.setProtocol(IpProtocol.TCP);
+//        l3.setIdentification();
+//        l3.set
+
+        iPv4.setSourceAddress(this.getIpSource());
+        iPv4.setDestinationAddress(this.getIpDest());
 
 
         // Set as UDP
@@ -46,8 +53,8 @@ class TCPPackageCreator {
 
 
         // Set the payloads
-        l2.setPayload(l3);
-        l3.setPayload(oldTCP);
+        l2.setPayload(iPv4);
+//        l3.setPayload(oldTCP);
 
         // Serialize
         byte[] serializedData = l2.serialize();

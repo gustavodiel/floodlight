@@ -6,6 +6,7 @@ import net.floodlightcontroller.core.internal.IOFSwitchService;
 import net.floodlightcontroller.devicemanager.IDevice;
 import net.floodlightcontroller.devicemanager.IDeviceService;
 import net.floodlightcontroller.devicemanager.SwitchPort;
+import net.floodlightcontroller.devicemanager.internal.Device;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.packet.*;
 import net.floodlightcontroller.routing.IRoutingService;
@@ -15,6 +16,7 @@ import org.projectfloodlight.openflow.types.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
@@ -38,8 +40,11 @@ public class DropboxAnalyzer {
 
 	//                     Fake IP  Match
 	private static HashMap<String, FakeIPMatch> arpTable = new HashMap<>();
+	private static HashMap<String, String> fakedIps = new HashMap<>();
 
 	private static boolean first = true;
+
+	IDeviceService deviceManagerService;
 	
 	public DropboxAnalyzer() {
 		// TODO Auto-generated constructor stub
@@ -90,9 +95,9 @@ public class DropboxAnalyzer {
         FakeIPMatch match = getMatchForFakeIp(target);
 
         if (match != null) {
-            MacAddress macTarget = match.macAddress;
+            MacAddress macTarget = match.fakeMacAddress;
             if (macTarget == null) {
-                macTarget = match.macAddress = generateMacAddressForFakeIp(target);
+                macTarget = match.fakeMacAddress = generateMacAddressForFakeIp(target);
             }
 
             // macSender    macTarget   macDest ipSender    ipTarget
@@ -108,8 +113,8 @@ public class DropboxAnalyzer {
     }
 
     private MacAddress generateMacAddressForFakeIp(IPv4Address iPv4Address) {
-	    String strMac = "Ba:ba:ca:";
-	    String last = String.format("%06d", arpTable.size());
+        String strMac = "Ba:ba:ca:";
+        String last = String.format("%06d", arpTable.size());
 
         last = last.substring(0, 2) + ":" + last.substring(2, 4) + ":" + last.substring(4, 6);
 
@@ -120,18 +125,36 @@ public class DropboxAnalyzer {
         return MacAddress.of(finalMac);
     }
 
+    private String generateFakeIpForSubnetworkOf(IPv4Address iPv4Address) {
+        String[] components = iPv4Address.toString().split("\\.");
+        log.info(iPv4Address.toString());
+        String base = components[0] + '.' + components[1] + '.' + components[2] + '.';
+        int start = Integer.parseInt(components[3]) + 1;
+        while (start < 254) {
+            String currentIp = base + start;
+            log.info("Testing: " + currentIp);
+            if (findDeviceFromIP(IPv4Address.of(currentIp)) == null) {
+                return currentIp;
+            }
+            start++;
+        }
+        return base + start;
+    }
+
 	public boolean shouldDropPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService, IDeviceService deviceManagerService) {
         log.info("Processing LANSync package!");
 
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
+        this.deviceManagerService = deviceManagerService;
+
         if (packageIsTCP(ipv4.getPayload())) {
             log.info("*** It is TCP ***********************************************************");
-            return processTCPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
+            return processTCPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService);
         } else {
             log.info("*** It is UDP");
-            processUDPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
-            return true;
+            processUDPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService);
+            return false;
         }
 	}
 
@@ -139,7 +162,7 @@ public class DropboxAnalyzer {
 	    return data instanceof TCP;
     }
 
-	private void processUDPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService, IDeviceService deviceManagerService) {
+	private void processUDPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService) {
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
         UDP udp = (UDP)ipv4.getPayload();
@@ -150,15 +173,25 @@ public class DropboxAnalyzer {
             return;
         }
 
+        // for each network create a fake ip.
+        generateFakeMatchForEachDevice(ipv4.getSourceAddress().toString(), eth.getSourceMACAddress(), switchService);
+
 
         for (DatapathId switchId : switchService.getAllSwitchDpids()){
             IOFSwitch toSendSwitch = switchService.getSwitch(switchId);
             if (!topologyService.isInSameCluster(toSendSwitch.getId(), iofSwitch.getId())) {
 
+                FakeIPMatch match = getMatchForIp(ipv4.getSourceAddress(), eth.getSourceMACAddress());
+
+                if (match == null) {
+                    log.info("No match for {}!", ipv4.getSourceAddress());
+                    return;
+                }
+
                 UDPPackageCreator info = new UDPPackageCreator(
-                        eth.getSourceMACAddress(),
+                        match.fakeMacAddress != null ? match.fakeMacAddress : eth.getSourceMACAddress(),
                         eth.getDestinationMACAddress(),
-                        createFakeIpForSwitch(ipv4.getSourceAddress(), toSendSwitch),
+                        IPv4Address.of(match.fakeIP),
                         IPv4Address.of("255.255.255.255"),
                         udp.getSourcePort().getPort(),
                         udp.getDestinationPort().getPort());
@@ -168,49 +201,84 @@ public class DropboxAnalyzer {
         }
     }
 
-    private IPv4Address createFakeIpForSwitch(IPv4Address iPv4Address, IOFSwitch iofSwitch) {
-        if (first) {
-            first = false;
+    private void generateFakeMatchForEachDevice(String realIp, MacAddress realmac, IOFSwitchService switchService) {
+        Collection<? extends IDevice> allDevices = deviceManagerService.getAllDevices();
+        IDevice realDevice = findDeviceFromIP(IPv4Address.of(realIp));
+        for (IDevice device : allDevices) {
+            if (realDevice == device || isHostsOnSameSwitch(device, realDevice, switchService)) continue;
 
-            FakeIPMatch aliceMatch = new FakeIPMatch("10.0.1.4", "10.0.2.2");
-            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:01");
+            for (IPv4Address ip : device.getIPv4Addresses()) {
+                boolean alreadyFaked = fakedIps.containsKey(ip.toString());
+                log.info("Has {} faked? {}", ip.toString(), alreadyFaked);
 
-            FakeIPMatch bobMatch = new FakeIPMatch("10.0.1.5", "10.0.2.3");
-            bobMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:03");
+                boolean isBanned = isBannedIp(ip);
+                log.info("Is {} banned? {}", ip, isBanned);
 
-            FakeIPMatch dielMatch = new FakeIPMatch("10.0.2.4", "10.0.1.2");
-            aliceMatch.macAddress = MacAddress.of("ba:ba:ba:ba:00:02");
-
-            arpTable.put("10.0.1.4", aliceMatch);
-            arpTable.put("10.0.1.5", bobMatch);
-
-            arpTable.put("10.0.2.4", dielMatch);
-            log.info("Rules added for Diel and Alice!");
+                if (!(alreadyFaked || isBanned)) {
+                    createFakeMatchForIp(ip, IPv4Address.of(realIp), realmac);
+                }
+            }
         }
+    }
 
-	    if (arpTable.containsKey(iPv4Address.toString())) {
-	        FakeIPMatch match = arpTable.get(iPv4Address.toString());
+    private boolean isBannedIp(IPv4Address ip) {
+	    return ip.toString().equals("10.0.0.1") || ip.toString().equals("10.0.0.2");
+    }
 
-	        return IPv4Address.of(match.FakeIP);
-        } else {
-	        log.error("NOP! {}", iPv4Address.toString());
-        }
-        FakeIPMatch fakeIPMatch = new FakeIPMatch(iPv4Address.toString(), iPv4Address.toString());
+    private FakeIPMatch createFakeMatchForIp(IPv4Address ipToConnect, IPv4Address realIp, MacAddress realMac) {
+//        if (first) {
+//            first = false;
+//
+//            FakeIPMatch aliceMatch = new FakeIPMatch("10.0.1.4", "10.0.2.2");
+//            aliceMatch.realMacAddress = MacAddress.of("00:00:00:00:02:02");
+//            aliceMatch.fakeMacAddress = MacAddress.of("ba:ba:ca:00:02:02");
+//
+//            FakeIPMatch dielMatch = new FakeIPMatch("10.0.2.4", "10.0.1.2");
+//            dielMatch.realMacAddress = MacAddress.of("00:00:00:00:01:02");
+//            dielMatch.fakeMacAddress = MacAddress.of("ba:ba:ca:00:01:02");
+//
+//            arpTable.put("10.0.1.4", aliceMatch);
+//            arpTable.put("10.0.2.4", dielMatch);
+//
+//            log.info("Rules added for Alice, Bob and Diel!");
+//        }
 
-        arpTable.put(iPv4Address.toString(), fakeIPMatch);
+        // If we already have a real ip with a match
+//        for (FakeIPMatch match : arpTable.values()) {
+//            if (match.realIP.equals(realIp.toString())) {
+//                return match;
+//            }
+//        }
 
-	    return IPv4Address.of(fakeIPMatch.FakeIP);
+        // If we already have this fake ip
+//        if (arpTable.containsKey(realIp.toString())) {
+//            return arpTable.get(realIp.toString());
+//        } else {
+//            log.error("NOP! {}", realIp.toString());
+//        }
+
+        // Criate a new match
+        String fakeIp = generateFakeIpForSubnetworkOf(ipToConnect);
+
+        FakeIPMatch fakeIPMatch = new FakeIPMatch(fakeIp, realIp.toString());
+
+        log.info("Generated IP {} for real {}!", fakeIp, realIp);
+
+        arpTable.put(fakeIp, fakeIPMatch);
+        fakedIps.put(realIp.toString(), fakeIp);
+
+        fakeIPMatch.fakeMacAddress = generateMacAddressForFakeIp(realIp);
+        fakeIPMatch.realMacAddress = realMac;
+
+        return fakeIPMatch;
     }
 
     private boolean isHostsOnSameSwitch(IDevice host1, IDevice host2, IOFSwitchService switchService){
 	    if (host1 == null || host2 == null) { // How could this be?
-            log.error("Null!");
+            log.error("Hosts Null!!");
 	        return false;
         }
-        log.info("Host 1:" + host1.toString());
-        log.info("Host 2:" + host2.toString());
 
-        log.info("[ SWITCHES ] **********************************************************************");
         for (SwitchPort switchPort : host1.getAttachmentPoints()) {
             DatapathId datapathId1 = switchPort.getNodeId();
             for (SwitchPort switchPort2 : host2.getAttachmentPoints()) {
@@ -223,49 +291,80 @@ public class DropboxAnalyzer {
         return false;
     }
 
-    private boolean processTCPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService, IDeviceService deviceManagerService) {
+    private boolean processTCPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService) {
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
-        IDevice h1 = null;
-        IDevice h2 = null;
+        IDevice h1 = findDeviceFromIP(ipv4.getDestinationAddress());
+        IDevice h2 = findDeviceFromIP(ipv4.getSourceAddress());
 
-        for (IDevice device : deviceManagerService.getAllDevices()) {
-            log.info(device.toString());
-            if (Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getDestinationAddress()) ||
-                    Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getSourceAddress())) {
-                if (h1 == null) {
-                    h1 = device;
-                } else {
-                    h2 = device;
-                }
-            }
-        }
+//        for (IDevice device : deviceManagerService.getAllDevices()) {
+//            log.info(device.toString());
+//            if (Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getDestinationAddress()) ||
+//                    Arrays.asList(device.getIPv4Addresses()).contains(ipv4.getSourceAddress())) {
+//                if (h1 == null) {
+//                    h1 = device;
+//                } else {
+//                    h2 = device;
+//                }
+//            }
+//        }
 
         if (isHostsOnSameSwitch(h1, h2, switchService)) {
-            log.info("SAME SUBNETWORK!!!!");
             return false;
         }
 
-        log.info("Not Done!");
         TCP tcp = (TCP)ipv4.getPayload();
 
-        IDevice destinationHost = findDeviceFromIP(ipv4.getDestinationAddress(), deviceManagerService);
+        FakeIPMatch matchDest = getMatchForIp(ipv4.getDestinationAddress(), eth.getDestinationMACAddress());
+        IDevice destinationHost = findDeviceFromIP(IPv4Address.of(matchDest.realIP));
 
-        SwitchPort[] ports = destinationHost.getAttachmentPoints();
+        try {
+            SwitchPort[] ports = destinationHost.getAttachmentPoints();
 
-        if (ports.length > 0) {
-            log.info("adsasdasdasaadasad");
-            DatapathId switchId = ports[0].getNodeId();
+            if (ports.length > 0) {
+                DatapathId switchId = ports[0].getNodeId();
 
-            IOFSwitch iofSwitch1 = switchService.getSwitch(switchId);
+                IOFSwitch iofSwitch1 = switchService.getSwitch(switchId);
 
-            TCPPackageCreator tcpPackage = new TCPPackageCreator(eth.getSourceMACAddress(), destinationHost.getMACAddress(), createFakeIpForSwitch(ipv4.getSourceAddress(), iofSwitch1), ipv4.getDestinationAddress(), tcp);
-            tcpPackage.sendTCPPacket(iofSwitch1, (Data)tcp.getPayload());
+                FakeIPMatch matchSource = getMatchForIp(ipv4.getSourceAddress(), eth.getSourceMACAddress());
+
+                log.info("************ MATCH FOR {} AND {}!!!", ipv4.getSourceAddress(), ipv4.getDestinationAddress());
+                log.info("************ WITH MAC FOR {} AND {}!!!", matchSource.fakeMacAddress, destinationHost.getMACAddress());
+
+                log.info("************ MATCH SOURCE: {} !!!", matchSource);
+                log.info("************ MATCH DESTINATION: {} !!!",matchDest);
+
+                TCPPackageCreator tcpPackage = new TCPPackageCreator(
+                        matchSource.fakeMacAddress,
+                        matchDest.realMacAddress,
+                        IPv4Address.of(matchSource.fakeIP),
+                        IPv4Address.of(matchDest.realIP),
+                        tcp);
+
+                tcpPackage.sendTCPPacket(iofSwitch1, ipv4, (Data) tcp.getPayload());
+            }
+        } catch (Exception e) {
+            log.info("ERROOOOOOOOOOOOOOOOOOOOOOOOOOOOO");
+            e.printStackTrace();
         }
 
         return true;
     }
 
+    private boolean isMacFake(MacAddress macAddress) {
+	    return macAddress.toString().startsWith("ba:ba:ca", 0);
+    }
+
+    private FakeIPMatch getMatchForIp(IPv4Address iPv4Address, MacAddress macAddress) {
+	    FakeIPMatch match = getMatchForFakeIp(iPv4Address);
+        if (match == null) {
+            match = getMatchForRealIp(iPv4Address);
+        }
+//        if (match == null) {
+//            match = createFakeMatchForIpOnSwitch(iPv4Address, macAddress, null);
+//        }
+        return match;
+    }
 
     private FakeIPMatch getMatchForFakeIp(IPv4Address iPv4Address) {
 	    if (arpTable.containsKey(iPv4Address.toString())) {
@@ -275,9 +374,8 @@ public class DropboxAnalyzer {
     }
 
     private FakeIPMatch getMatchForRealIp(IPv4Address iPv4Address) {
-        for (String fakeIp : arpTable.keySet()) {
-            FakeIPMatch match = arpTable.get(fakeIp);
-            if (iPv4Address.toString().equals(match.RealIP)) {
+        for (FakeIPMatch match : arpTable.values()) {
+            if (match.realIP.equals(iPv4Address.toString())) {
                 return match;
             }
         }
@@ -305,7 +403,7 @@ public class DropboxAnalyzer {
         return ((dstPort >= 17500 && dstPort <= 17600) || (srcPort >= 17500 && srcPort <= 17600));
     }
 
-    private IDevice findDeviceFromIP(IPv4Address ip, IDeviceService deviceManagerService) {
+    private IDevice findDeviceFromIP(IPv4Address ip) {
         // Fetch all known devices
         Collection<? extends IDevice> allDevices = deviceManagerService.getAllDevices();
 
