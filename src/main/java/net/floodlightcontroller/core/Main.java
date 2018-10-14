@@ -45,15 +45,9 @@ public class Main {
 			// Setup logger
 			System.setProperty("org.restlet.engine.loggerFacadeClass", 
 					"org.restlet.ext.slf4j.Slf4jLoggerFacade");
-
+			
 			CmdLineSettings settings = new CmdLineSettings();
-			CmdLineParser parser = new CmdLineParser(settings);
-			try {
-				parser.parseArgument(args);
-			} catch (CmdLineException e) {
-				parser.printUsage(System.out);
-				System.exit(1);
-			}
+
 
 			// Load modules
 			FloodlightModuleLoader fml = new FloodlightModuleLoader();
@@ -63,7 +57,7 @@ public class Main {
 				restApi.run(); 
 			} catch (FloodlightModuleConfigFileNotFoundException e) {
 				// we really want to log the message, not the stack trace
-				logger.error("Could not read config file: {}", e.getMessage());
+                logger.error("Could not read config file: {}", e.getMessage());
 				System.exit(1);
 			}
 			try {

@@ -132,7 +132,6 @@ public abstract class ForwardingBase implements IOFMessageListener {
     @Override
     public Command receive(IOFSwitch sw, OFMessage msg, FloodlightContext cntx) {
         Ethernet eth = IFloodlightProviderService.bcStore.get(cntx, IFloodlightProviderService.CONTEXT_PI_PAYLOAD);
-
         switch (msg.getType()) {
         case PACKET_IN:
             IRoutingDecision decision = null;
@@ -150,8 +149,6 @@ public abstract class ForwardingBase implements IOFMessageListener {
      * Push routes from back to front
      * @param route Route to push
      * @param match OpenFlow fields to match on
-     * @param srcSwPort Source switch port for the first hop
-     * @param dstSwPort Destination switch port for final hop
      * @param cookie The cookie to set in each flow_mod
      * @param cntx The floodlight context
      * @param requestFlowRemovedNotification if set to true then the switch would

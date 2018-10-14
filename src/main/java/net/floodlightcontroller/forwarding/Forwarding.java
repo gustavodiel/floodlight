@@ -58,6 +58,10 @@ import org.python.google.common.collect.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import tcc.diel.dropbox.DropboxAnalyzer;
+import tcc.diel.dropbox.DropboxHelper;
+import tcc.diel.dropbox.DropboxResponses;
+
 import javax.annotation.Nonnull;
 
 public class Forwarding extends ForwardingBase implements IFloodlightModule, IOFSwitchListener, ILinkDiscoveryListener,
@@ -101,6 +105,8 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
     private Map<OFPacketIn, Ethernet> l3cache;
     private DeviceListenerImpl deviceListener;
+    
+    private static DropboxAnalyzer dropbox = new DropboxAnalyzer();
 
     protected static class FlowSetIdRegistry {
         private volatile Map<NodePortTuple, Set<U64>> nptToFlowSetIds;
@@ -203,6 +209,26 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         OFPort inPort = OFMessageUtils.getInPort(pi);
         NodePortTuple npt = new NodePortTuple(sw.getId(), inPort);
+
+        if (DropboxHelper.shouldDropPackage(eth, sw)) {
+            doDropFlow(sw, pi, decision, cntx);
+            return Command.CONTINUE;
+        }
+
+
+        DropboxResponses response = dropbox.isEthernetPackageLANSync(eth);
+        if (response == DropboxResponses.LANSYNC) {
+        	if (dropbox.shouldDropPackage(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService)) {
+                doDropFlow(sw, pi, decision, cntx);
+                return Command.CONTINUE;
+            }
+
+            doFlood(sw, pi, decision, cntx);
+
+        	return Command.CONTINUE;
+        } else if (response == DropboxResponses.ARP) {
+            dropbox.processARPRequest(eth, pi, sw, this.topologyService, floodlightProviderService, switchService, routingEngineService, linkService, deviceManagerService);
+        }
 
         if (decision != null) {
             if (log.isTraceEnabled()) {
@@ -706,7 +732,7 @@ public class Forwarding extends ForwardingBase implements IFloodlightModule, IOF
 
         Match m = createMatchFromPacket(sw, srcPort, pi, cntx);
 
-        if (! path.getPath().isEmpty()) {
+        if (!path.getPath().isEmpty()) {
             if (log.isDebugEnabled()) {
                 log.debug("pushRoute inPort={} route={} " +
                                 "destination={}:{}",

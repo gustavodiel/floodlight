@@ -7,11 +7,11 @@ FL_LOGBACK="${FL_HOME}/logback.xml"
 
 # Set JVM options
 JVM_OPTS=""
-JVM_OPTS="$JVM_OPTS -server -d64"
+JVM_OPTS="$JVM_OPTS -server"
 JVM_OPTS="$JVM_OPTS -Xmx2g -Xms2g -Xmn800m"
-JVM_OPTS="$JVM_OPTS -XX:+UseParallelGC -XX:+AggressiveOpts -XX:+UseFastAccessorMethods"
+JVM_OPTS="$JVM_OPTS -XX:+UseParallelGC -XX:+AggressiveOpts"
 JVM_OPTS="$JVM_OPTS -XX:MaxInlineSize=8192 -XX:FreqInlineSize=8192"
-JVM_OPTS="$JVM_OPTS -XX:CompileThreshold=1500 -XX:PreBlockSpin=8"
+JVM_OPTS="$JVM_OPTS -XX:CompileThreshold=1500"
 JVM_OPTS="$JVM_OPTS -Dpython.security.respectJavaAccessibility=false"
 
 # Create a logback file if required
@@ -25,10 +25,10 @@ JVM_OPTS="$JVM_OPTS -Dpython.security.respectJavaAccessibility=false"
     <root level="INFO">
         <appender-ref ref="STDOUT" />
     </root>
-    <logger name="org" level="ALL"/>
-    <logger name="LogService" level="DEBUG"/> <!-- Restlet access logging -->
-    <logger name="net.floodlightcontroller" level="ALL"/>
-    <logger name="net.floodlightcontroller.logging" level="ALL"/>
+    <logger name="org" level="INFO"/>
+    <logger name="LogService" level="INFO"/> <!-- Restlet access logging -->
+    <logger name="net.floodlightcontroller" level="INFO"/>
+    <logger name="net.floodlightcontroller.logging" level="INFO"/>
 </configuration>
 EOF_LOGBACK
 
