@@ -10,16 +10,21 @@ import net.floodlightcontroller.devicemanager.internal.Device;
 import net.floodlightcontroller.linkdiscovery.ILinkDiscoveryService;
 import net.floodlightcontroller.packet.*;
 import net.floodlightcontroller.routing.IRoutingService;
+import net.floodlightcontroller.routing.Path;
 import net.floodlightcontroller.topology.ITopologyService;
+import net.floodlightcontroller.util.OFMessageUtils;
+import org.projectfloodlight.openflow.protocol.OFFlowModCommand;
 import org.projectfloodlight.openflow.protocol.OFPacketIn;
+import org.projectfloodlight.openflow.protocol.OFPortDesc;
+import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.*;
+import net.floodlightcontroller.util.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashMap;
+import java.util.*;
 
 /*
 Pls read:
@@ -41,6 +46,8 @@ public class DropboxAnalyzer {
 	//                     Fake IP  Match
     static final HashMap<String, FakeIPMatch> ARP_TABLE = new HashMap<>();
     static final HashMap<String, String> FAKED_IPS = new HashMap<>();
+
+    static final ArrayList<Match> matches = new ArrayList<>();
 
 	static IDeviceService deviceManagerService;
 	
@@ -111,9 +118,9 @@ public class DropboxAnalyzer {
         DropboxAnalyzer.deviceManagerService = deviceManagerService;
 
         if (packageIsTCP(ipv4.getPayload())) {
-            return processTCPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService);
+            return processTCPPackage(eth, packetIn, iofSwitch, topologyService, switchService, routingEngineService);
         } else {
-            processUDPPackage(eth, packetIn, iofSwitch, topologyService, floodlightProviderService, switchService, routingEngineService, linkService);
+            processUDPPackage(eth, packetIn, iofSwitch, topologyService, switchService, routingEngineService);
             return false;
         }
 	}
@@ -122,7 +129,7 @@ public class DropboxAnalyzer {
 	    return data instanceof TCP;
     }
 
-	private void processUDPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService) {
+	private void processUDPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IOFSwitchService switchService, IRoutingService routingEngineService) {
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
         UDP udp = (UDP)ipv4.getPayload();
@@ -147,20 +154,60 @@ public class DropboxAnalyzer {
                     return;
                 }
 
-                UDPPackageCreator info = new UDPPackageCreator(
-                        match.fakeMacAddress != null ? match.fakeMacAddress : eth.getSourceMACAddress(),
-                        eth.getDestinationMACAddress(),
-                        IPv4Address.of(match.fakeIP),
-                        IPv4Address.of("255.255.255.255"),
-                        udp.getSourcePort().getPort(),
-                        udp.getDestinationPort().getPort());
+                Match.Builder mb = iofSwitch.getOFFactory().buildMatch();
+                mb.setExact(MatchField.UDP_DST, udp.getDestinationPort())
+                        .setExact(MatchField.ETH_SRC, eth.getSourceMACAddress());
 
-                info.sendUDPPacket(toSendSwitch, eth, packageData);
+                if (!matches.contains(mb.build())) {
+                    Collection<OFPortDesc> ports = toSendSwitch.getSortedPorts();
+
+                    OFPortDesc lastPort = null;
+
+                    // Pois eh, tem que ser assim :/
+                    for (OFPortDesc port : ports) {
+                        lastPort = port;
+                    }
+
+                    Path path = routingEngineService.getPath(iofSwitch.getId(),
+                            OFMessageUtils.getInPort(packetIn),
+                            toSendSwitch.getId(),
+                            lastPort.getPortNo());
+
+                    log.info(path.toString());
+
+                    // SRC switch to all others
+
+                    if (path.getPath().size() > 0) {
+
+                        OFFlowModCommand command = OFFlowModCommand.ADD;
+
+                        matches.add(mb.build());
+
+                        List<OFAction> al = new ArrayList<>();
+                        al.add(iofSwitch.getOFFactory().actions().buildOutput().setPort(path.getPath().get(0).getPortId()).build());
+
+                        DropboxFlowRuleBuilder.writeFlowMod(iofSwitch, command, mb.build(), OFPort.ALL, al);
+
+                    }
+
+                    // Other switch to its hosts
+
+                    UDPPackageCreator info = new UDPPackageCreator(
+                            match.fakeMacAddress != null ? match.fakeMacAddress : eth.getSourceMACAddress(),
+                            eth.getDestinationMACAddress(),
+                            IPv4Address.of(match.fakeIP),
+                            IPv4Address.of("255.255.255.255"),
+                            udp.getSourcePort().getPort(),
+                            udp.getDestinationPort().getPort());
+
+                    info.sendUDPPacket(toSendSwitch, eth, packageData,  OFMessageUtils.getInPort(packetIn));
+
+                }
             }
         }
     }
 
-    private boolean processTCPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IFloodlightProviderService floodlightProviderService, IOFSwitchService switchService, IRoutingService routingEngineService, ILinkDiscoveryService linkService) {
+    private boolean processTCPPackage(Ethernet eth, OFPacketIn packetIn, IOFSwitch iofSwitch, ITopologyService topologyService, IOFSwitchService switchService, IRoutingService routingEngineService) {
         IPv4 ipv4 = (IPv4) eth.getPayload();
 
         IDevice h1 = DropboxHelper.findDeviceFromIP(ipv4.getDestinationAddress());

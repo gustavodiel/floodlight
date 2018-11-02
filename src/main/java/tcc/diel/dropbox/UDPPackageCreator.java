@@ -5,11 +5,16 @@ import net.floodlightcontroller.packet.Data;
 import net.floodlightcontroller.packet.Ethernet;
 import net.floodlightcontroller.packet.IPv4;
 import net.floodlightcontroller.packet.UDP;
+import org.projectfloodlight.openflow.protocol.OFFlowModCommand;
 import org.projectfloodlight.openflow.protocol.OFPacketOut;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
+import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.protocol.match.MatchField;
 import org.projectfloodlight.openflow.types.*;
 
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.List;
 
 class UDPPackageCreator {
     private MacAddress macSource;
@@ -18,6 +23,8 @@ class UDPPackageCreator {
     private IPv4Address ipDest;
     private int portSource;
     private int portDest;
+
+    boolean useOld = false;
 
     UDPPackageCreator(MacAddress macSource, MacAddress macDest, IPv4Address ipSource, IPv4Address ipDest, int portSource, int portDest) {
         this.setMacSource(macSource);
@@ -28,7 +35,8 @@ class UDPPackageCreator {
         this.setPortDest(portDest);
     }
 
-    void sendUDPPacket(IOFSwitch iofSwitch, Ethernet ethernet, Data data) {
+    void sendUDPPacket(IOFSwitch iofSwitch, Ethernet ethernet, Data data, OFPort inPort) {
+        if (useOld) {
         // First, we create a Eth header
         Ethernet l2 = new Ethernet();
         l2.setSourceMACAddress(this.getMacSource());
@@ -65,6 +73,29 @@ class UDPPackageCreator {
                 .build();
 
         iofSwitch.write(po);
+
+        } else {
+
+            MacAddress srcMac = ethernet.getSourceMACAddress();
+            MacAddress dstMac = ethernet.getDestinationMACAddress();
+
+            OFFlowModCommand command = OFFlowModCommand.ADD;
+            Match.Builder mb = iofSwitch.getOFFactory().buildMatch();
+            mb.setExact(MatchField.IN_PORT, inPort);
+
+            List<OFAction> al = new ArrayList<>();
+            al.add(iofSwitch.getOFFactory().actions().buildOutput().setPort(OFPort.ALL).build());
+
+            al.add(iofSwitch.getOFFactory().actions().buildSetDlDst().setDlAddr(this.getMacDest()).build());
+            al.add(iofSwitch.getOFFactory().actions().buildSetDlSrc().setDlAddr(this.getMacSource()).build());
+
+            al.add(iofSwitch.getOFFactory().actions().buildSetNwSrc().setNwAddr(this.getIpDest()).build());
+            al.add(iofSwitch.getOFFactory().actions().buildSetNwDst().setNwAddr(this.getIpSource()).build());
+
+
+            DropboxFlowRuleBuilder.writeFlowMod(iofSwitch, command, mb.build(), OFPort.FLOOD, al);
+        }
+
     }
 
     public MacAddress getMacSource() {

@@ -8,6 +8,7 @@ import org.projectfloodlight.openflow.protocol.OFFlowModCommand;
 import org.projectfloodlight.openflow.protocol.OFFlowModFlags;
 import org.projectfloodlight.openflow.protocol.action.OFAction;
 import org.projectfloodlight.openflow.protocol.match.Match;
+import org.projectfloodlight.openflow.types.DatapathId;
 import org.projectfloodlight.openflow.types.OFBufferId;
 import org.projectfloodlight.openflow.types.OFPort;
 import org.projectfloodlight.openflow.types.U64;
@@ -18,6 +19,12 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+
+class DropboxFlowMatch {
+    DatapathId sw;
+    OFFlowModCommand command;
+    Match match;
+}
 
 public class DropboxFlowRuleBuilder {
 
@@ -35,8 +42,8 @@ public class DropboxFlowRuleBuilder {
      * @param match The OFMatch structure to write.
      * @param outPort The switch port to output it to.
      */
-    private void writeFlowMod(IOFSwitch sw, OFFlowModCommand command,
-                              Match match, OFPort outPort) {
+    public static void writeFlowMod(IOFSwitch sw, OFFlowModCommand command,
+                              Match match, OFPort outPort, List<OFAction> al) {
 
         OFFlowMod.Builder fmb;
         if (command == OFFlowModCommand.DELETE) {
@@ -50,14 +57,13 @@ public class DropboxFlowRuleBuilder {
         fmb.setHardTimeout(HARD_TIMEOUT);
         fmb.setPriority(PRIORITY);
         fmb.setOutPort((command == OFFlowModCommand.DELETE) ? OFPort.ANY : outPort);
-        Set<OFFlowModFlags> sfmf = new HashSet<OFFlowModFlags>();
+        Set<OFFlowModFlags> sfmf = new HashSet<>();
+
         if (command != OFFlowModCommand.DELETE) {
             sfmf.add(OFFlowModFlags.SEND_FLOW_REM);
         }
-        fmb.setFlags(sfmf);
 
-        List<OFAction> al = new ArrayList<OFAction>();
-        al.add(sw.getOFFactory().actions().buildOutput().setPort(outPort).setMaxLen(0xffFFffFF).build());
+        fmb.setFlags(sfmf);
 
         FlowModUtils.setActions(fmb, al, sw);
 
